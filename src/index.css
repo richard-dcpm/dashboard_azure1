@@ -1,0 +1,100 @@
+/*@tailwind base;
+@tailwind components;
+@tailwind utilities;
+*/
+/* Apply the dark theme and background image to the body */
+/*
+body {
+    background-image: url('/images/dashboard-background.jpg'); /* Make sure this path is correct */
+/*    background-size: cover;
+    background-position: center center;
+    background-attachment: fixed;
+    @apply bg-bg text-fg; 
+}
+*/
+/* Define the reusable Glassmorphism component class */
+/*
+@layer components {
+  .glass-card {
+    @apply backdrop-blur-glass bg-glass-white border border-glass-border rounded-lg shadow-glass text-fg; 
+    @apply transition-all duration-300 ease-in-out;
+  }
+  
+  .glass-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+  }
+}
+*/
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================
+   Global browser compatibility fixes
+   ============================ */
+
+/* Prevent unwanted text scaling on mobile browsers */
+html {
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Fix Leaflet SVG user-select warnings */
+.leaflet-overlay-pane svg {
+  user-select: none;          /* Chrome, Edge, modern browsers */
+  -webkit-user-select: none;  /* Safari */
+  -moz-user-select: none;     /* Firefox */
+}
+
+/* ============================
+   Body background and theme
+   ============================ */
+
+body {
+  background-image: url('/images/dashboard-background.jpg'); /* Ensure path is correct */
+  background-size: cover;
+  background-position: center center;
+  background-attachment: fixed;
+
+  @apply bg-bg text-fg;
+}
+
+/* ============================
+   Glassmorphism components
+   ============================ */
+
+@layer components {
+  .glass-card {
+    /* Glass blur with Safari support */
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+
+    @apply bg-glass-white border border-glass-border rounded-lg shadow-glass text-fg;
+    @apply transition-all duration-300 ease-in-out;
+  }
+
+  .glass-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* Force neon yellow clusters with black text */
+.leaflet-marker-icon div {
+  background: #FFFF00 !important;
+}
+
+.leaflet-marker-icon div strong {
+  color: #000000 !important;
+  font-weight: 900 !important;
+}
+
+.marker-cluster div {
+  background: #FFFF00 !important;
+}
+
+.marker-cluster div span {
+  color: #000000 !important;
+}

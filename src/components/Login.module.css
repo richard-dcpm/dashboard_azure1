@@ -1,0 +1,11 @@
+/* Login.module.css */
+.wrapper { @apply grid gap-8 lg:grid-cols-[1fr_0.8fr]; }
+.panel { @apply bg-white border border-border rounded-lg shadow-sm p-8; }
+.heading { @apply text-2xl font-bold; }
+.sub { @apply text-muted mb-6; }
+.form { @apply grid gap-4; }
+.row { @apply flex items-center justify-between; }
+.checkbox { @apply inline-flex items-center gap-2 text-fg; }
+.link { @apply text-primary hover:text-primary-600; }
+
+.aside { @apply bg-white border border-border rounded-lg shadow-sm p-8; }

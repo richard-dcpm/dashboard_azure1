@@ -1,0 +1,6 @@
+/* Header.module.css */
+.header { @apply flex items-center justify-between py-6; }
+.logo { @apply font-bold text-[20px] text-fg no-underline; }
+.nav { @apply flex gap-3; }
+.nav a { @apply text-fg no-underline px-2 py-1 rounded-sm; }
+.nav a:hover { @apply bg-slate-100; }

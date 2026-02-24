@@ -1,0 +1,5 @@
+.leaflet-overlay-pane svg {
+  user-select: none;          /* Chrome, Edge, modern browsers */
+  -webkit-user-select: none;  /* Safari */
+  -moz-user-select: none;     /* Firefox */
+}
