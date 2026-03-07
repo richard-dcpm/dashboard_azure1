@@ -1,10 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CONTAINER_OPTIONS, DEFAULT_CENTER, DEFAULT_ZOOM } from "./constants";
+//import { CONTAINER_OPTIONS, DEFAULT_CENTER, DEFAULT_ZOOM } from "./constants";
+import { CONTAINER_OPTIONS, DEFAULT_CENTER, DEFAULT_ZOOM, SAS, BASE_URL } from "./constants";
+
 import { extractGpsFromFile, extractGpsFromUrl, parseLatLonFromName } from "./exifService";
 import { useLeafletMap } from "./useLeafletMap";
 import { listByHierarchy, uploadFilesWithSAS, listContainers } from "./blobService";
-import { searchContainers } from "./containerSearchUtil";
+//import { searchContainers } from "./containerSearchUtil";
+//import { searchContainers, searchAcrossContainers } from "./containerSearchUtil";
+import { searchContainers, searchAcrossContainers, searchWithinContainer } from "./containerSearchUtil";
+//import { searchAcrossContainers } from "./containerSearchEngine";
 
 /* ------------------------------------------------------------- */
 /* Performance Utilities - Moved outside component */
@@ -134,7 +139,17 @@ function FileExplorerModal({
   const [query, setQuery] = React.useState("");
   const [selectedUrls, setSelectedUrls] = React.useState(() => new Set());
   const [containerQuery, setContainerQuery] = React.useState("");
-
+  /* newly added feb 24 start */
+  const [searching,     setSearching]     = React.useState(false);
+  const [searchResults, setSearchResults] = React.useState(null);  // null = not searching, [] = no results
+  const [searchStatus,  setSearchStatus]  = React.useState(null);  // { container, found, done }
+  const abortRef = React.useRef(null);
+  /* newly added feb 24 end*/
+  
+  /* newly added feb 26 start */
+  const [searchFromRoot, setSearchFromRoot] = React.useState(false);
+  /* newly added feb 26 end   */
+  
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -201,12 +216,21 @@ function FileExplorerModal({
     },
     [baseUrl, sasToken]
   );
-
+/*
   React.useEffect(() => {
     if (!open) return;
     if (container) loadLevel(container, path);
   }, [open, container, path, loadLevel]);
+*/
+/* newly added feb 24 */
+React.useEffect(() => {
+    if (!open) return;
+    if (query.trim()) return;          // ← skip browse-load while search is active
+    if (container) loadLevel(container, path);
+  }, [open, container, path, loadLevel, query]);
+/* */
 
+/*
     React.useEffect(() => {
 	  if (!open) return;
 	  setContainer(initialContainer || "");
@@ -215,7 +239,104 @@ function FileExplorerModal({
 	  setContainerQuery("");  // ✅ ADD THIS LINE
 	  setSelectedUrls(new Set());
 	}, [open, initialContainer, initialPathSegments]);
-	
+*/
+  /* newly added feb 24 */
+  React.useEffect(() => {
+    if (!open) return;
+    setContainer(initialContainer || "");
+    setPath(initialPathSegments || []);
+    setQuery("");
+    setContainerQuery("");
+    setSelectedUrls(new Set());
+    // ← also reset search state so previous results don't flash
+    setSearching(false);
+    setSearchResults(null);
+    setSearchStatus(null);
+    abortRef.current?.abort();
+  }, [open, initialContainer, initialPathSegments]);
+ /* */
+ 
+	/* newly added feb 26 */
+	React.useEffect(() => {
+		abortRef.current?.abort();
+
+		if (!open || !query.trim()) {
+		  setSearching(false);
+		  setSearchResults(null);
+		  setSearchStatus(null);
+		  return;
+		}
+
+		const ctrl = new AbortController();
+		abortRef.current = ctrl;
+
+		const timer = setTimeout(async () => {
+		  if (ctrl.signal.aborted) return;
+
+		  setSearching(true);
+		  setSearchResults([]);
+		  setSearchStatus({ container: container || "…", found: 0, done: false });
+
+		  // ── MODE DETECTION ──────────────────────────────────────────────────
+		  const isWithinContainer = Boolean(container);
+		  const pathPrefix = path.join("/");   // e.g. "2025-12-09/anonymous/test/Oyster Cove"
+
+		  try {
+			if (isWithinContainer) {
+			  // ── MODE 2: search within current container (and optionally current path) ──
+			  await searchWithinContainer({
+				baseUrl,
+				sasToken,
+				query: query.trim(),
+				container,
+				pathPrefix,
+				searchFromRoot,
+				signal: ctrl.signal,
+				onProgress: ({ found, done, currentMatches, error }) => {
+				  if (ctrl.signal.aborted) return;
+				  setSearchStatus({ container, found, done, error, mode: "within" });
+				  if (currentMatches) setSearchResults([...currentMatches]);
+				  if (done) setSearching(false);
+				},
+			  });
+			} else {
+			  // ── MODE 1: cross-container search (existing behaviour) ──────────
+			  const ordered = ["raw", "processed", "projects", "uploads", "issued"].filter((c) =>
+				(fallbackContainers || []).map((x) => x.toLowerCase()).includes(c.toLowerCase())
+			  );
+			  await searchAcrossContainers({
+				baseUrl,
+				sasToken,
+				query: query.trim(),
+				containers: ordered,
+				signal: ctrl.signal,
+				onProgress: ({ container: c, found, done, error, currentMatches }) => {
+				  if (ctrl.signal.aborted) return;
+				  setSearchStatus({ container: c, found, done, error, mode: "across" });
+				  if (currentMatches) setSearchResults([...currentMatches]);
+				  if (done) setSearching(false);
+				},
+			  });
+			}
+
+			// Safety-net final state
+			if (!ctrl.signal.aborted) setSearching(false);
+
+		  } catch (err) {
+			if (!ctrl.signal.aborted) {
+			  console.error("[FileExplorerModal] Search error:", err);
+			  setSearchResults([]);
+			  setSearching(false);
+			}
+		  }
+		}, 400);
+
+		return () => clearTimeout(timer);
+	  }, [open, query, container, path, searchFromRoot]);  // ← re-run if container/path changes
+
+  
+  /* newly added feb 26 */
+  
   const onPickContainer = (name) => {
     setFolders([]);
     setFiles([]);
@@ -258,7 +379,6 @@ function FileExplorerModal({
     onClose?.();
   };
 
-
   const filteredFolders = folders
     .map((f) => (f.endsWith("/") ? f.slice(0, -1) : f))
     .filter((name) => name.toLowerCase().includes(query.toLowerCase()));
@@ -268,6 +388,11 @@ function FileExplorerModal({
 
   if (!open) return null;
 
+  const getFilePath = (name = "") => {
+    const parts = name.split("/");
+    return parts.length > 1 ? parts.slice(0, -1).join(" / ") : "";
+  };
+  
   return (
     <div className="mt-4 relative">
         <div className="mt-4 relative z-50">
@@ -344,136 +469,324 @@ function FileExplorerModal({
                   </div>
                 ))}
               </div>
+			  {/*start*/}
+			  <div className="mt-3">
+                  {/* Mode indicator + scope toggle */}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs text-gray-500">
+                      {container
+                        ? <>Searching in <strong className="text-blue-700">{container}</strong>
+                            {!searchFromRoot && path.length > 0 &&
+                              <span className="text-gray-400"> / {path.join(" / ")}</span>
+                            }
+                          </>
+                        : <span className="text-gray-500">Searching across all containers</span>
+                      }
+                    </span>
 
-              <div className="mt-3">
-				  <input
-					value={query}
-					onChange={(e) => setQuery(e.target.value)}
-					placeholder="Filter folders/files…"
-					className="w-full px-3 py-2 text-black rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-				  />
-				</div>
+                    {/* Only show scope toggle when inside a container with a path */}
+                    {container && path.length > 0 && (
+                      <button
+                        onClick={() => setSearchFromRoot((v) => !v)}
+                        className={`text-xs px-2 py-0.5 rounded border transition ${
+                          searchFromRoot
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                        }`}
+                        title={searchFromRoot ? "Click to scope back to current folder" : "Click to search entire container"}
+                      >
+                        {searchFromRoot ? "Entire container" : "Current folder only"}
+                      </button>
+                    )}
+                  </div>
+
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={
+                      container
+                        ? `Search in ${container}${!searchFromRoot && path.length ? " / " + path.join(" / ") : ""}…`
+                        : "Search across all containers…"
+                    }
+                    className="w-full px-3 py-2 text-black rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                  />
+                </div>
+			  {/*end  */}
+				  
+                
             </div>
 
-            <div className="p-4">
-              {loading ? (
-                <div className="text-gray-500">Loading…</div>
-              ) : (
+			{/*******/}
+			<div className="p-4">
+              {query.trim() ? (
+                // ── SEARCH MODE (local filter + cross-container) ──────────────
                 <>
-                  <div className="mb-4">
-                    <div className="text-sm font-semibold text-gray-700 mb-2">Folders</div>
-                    <div
-                      className={
-                        view === "grid"
-                          ? "grid grid-cols-3 gap-3 max-h-[420px] overflow-auto"
-                          : "divide-y rounded-lg border border-gray-200 max-h-[280px] overflow-auto"
-                      }
-                    >
-                      {filteredFolders.map((full) => {
-                        const name = full.split("/").filter(Boolean).pop();
-                        return (
-                          <button
-                            key={full}
-                            onClick={() => onOpenFolder(full + "/")}
-                            className={
-                              view === "grid"
-                                ? "group flex flex-col items-start gap-2 p-3 rounded-lg border border-gray-200 bg-white hover:shadow text-left"
-                                : "w-full flex items-center gap-3 px-3 py-3 hover:bg-gray-50 text-left"
-                            }
-                          >
-                            <GoldFolderIcon className="w-6 h-6 text-[#D4AF37]" />
-                            <div className="text-sm font-medium text-gray-800 truncate w-full">{name}</div>
-                          </button>
-                        );
-                      })}
-                      {filteredFolders.length === 0 && <div className="p-3 text-gray-500">No folders</div>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="text-sm font-semibold text-gray-700 mb-2">Images</div>
-
-                    {hasImages && (
-                      <div className="mb-2 flex items-center gap-2">
-                        <button
-                          onClick={selectAllVisible}
-                          className="px-2 py-1 rounded border bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
-                        >
-                          Select All
-                        </button>
-                        <button
-                          onClick={clearSelection}
-                          className="px-2 py-1 rounded border bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
-                        >
-                          Clear
-                        </button>
-                        <button
-                          onClick={doneSelection}
-                          disabled={selectedUrls.size === 0}
-                          className={`px-2 py-1 rounded border ${
-                            selectedUrls.size === 0 ? "bg-gray-200 text-gray-400" : "bg-blue-600 text-white"
-                          }`}
-                        >
-                          Done ({selectedUrls.size})
-                        </button>
-                      </div>
+                  {/* Spinner — shown while cross-container search is in flight */}
+                   <div className="flex items-center gap-2 mb-3 text-sm">
+                    {searching ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-blue-600 flex-shrink-0" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                        </svg>
+                        <span className="text-gray-700">
+							{searchStatus?.containerDone
+							  ? <>Finished <strong>{searchStatus?.container}</strong> — checking remaining containers…</>
+							  : <>Searching <strong>{searchStatus?.container}</strong>…</>
+							}
+							{searchStatus?.found > 0 && (
+							  <span className="ml-2 text-blue-700">
+								{searchStatus.found} match{searchStatus.found !== 1 ? "es" : ""} so far
+							  </span>
+							)}
+						</span>
+                      </>
+                    ) : (
+                      // FIX 2: clear "done" state — green tick + summary
+                      <span className="flex items-center gap-1.5 text-green-700 font-medium">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M20 6 9 17l-5-5"/>
+                        </svg>
+                        {searchResults && searchResults.length > 0
+                          ? `Search complete — ${searchResults.length} file${searchResults.length !== 1 ? "s" : ""} found`
+                          : "Search complete — no files found"}
+                      </span>
                     )}
-
-                    <div
-                      className={
-                        view === "grid"
-                          ? "grid grid-cols-3 gap-3 max-h-[420px] overflow-auto"
-                          : "divide-y rounded-lg border border-gray-200 max-h-[280px] overflow-auto"
-                      }
-                    >
-                      {filteredFiles.map((file) => {
-                        const isSelected = selectedUrls.has(file.url);
-                        return (
-                          <button
-                            key={file.url}
-                            onClick={() => toggleSelected(file)}
-                            className={
-                              view === "grid"
-                                ? `relative group p-2 rounded-lg border text-left transition ${
-                                    isSelected ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
-                                  }`
-                                : `w-full flex items-center gap-3 px-3 py-3 text-left ${
-                                    isSelected ? "bg-blue-50" : "hover:bg-gray-50"
-                                  }`
-                            }
-                          >
-                            <div
-                              className={`w-5 h-5 rounded border flex items-center justify-center ${
-                                isSelected ? "bg-blue-600 border-blue-600" : "bg-white border-gray-300"
-                              }`}
-                            >
-                              {isSelected && (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                                  <path d="M20 6 9 17l-5-5" />
-                                </svg>
-                              )}
-                            </div>
-
-                            <div
-                              className={
-                                view === "grid"
-                                  ? "w-full aspect-[4/3] bg-gray-100 rounded overflow-hidden mb-2"
-                                  : "w-16 h-12 rounded overflow-hidden bg-gray-100"
-                              }
-                            >
-                              <img src={file.url} alt="" className="w-full h-full object-cover" loading="lazy" />
-                            </div>
-
-                            <div className="text-sm font-medium text-gray-800 truncate flex-1">{file.name}</div>
-                          </button>
-                        );
-                      })}
-                      {filteredFiles.length === 0 && <div className="p-3 text-gray-500">No images</div>}
-                    </div>
                   </div>
+
+                  {/* Decide which list to render:
+                      - While searching → show local filteredFiles (instant feedback)
+                      - After search done → show full cross-container searchResults */}
+                  {(() => {
+                    const isLocalPhase = searching || searchResults === null;
+                    const displayFiles = isLocalPhase
+                      ? filteredFiles                // local filter on already-loaded files
+                      : searchResults;               // full cross-container results
+
+                    if (!isLocalPhase && displayFiles.length === 0) {
+                      return (
+                        <div className="py-8 text-center text-gray-500 text-sm">
+                          No records found for "<strong>{query}</strong>".
+                        </div>
+                      );
+                    }
+
+                    if (displayFiles.length === 0 && isLocalPhase) {
+                      return (
+                        <div className="py-4 text-center text-gray-400 text-sm italic">
+                          Searching all containers…
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <>
+                        {/* Label so user knows which phase they're seeing */}
+                        <div className="mb-2 text-xs text-gray-500 italic">
+                          {isLocalPhase
+                            ? `${displayFiles.length} local match${displayFiles.length !== 1 ? "es" : ""} in current container`
+                            : `${displayFiles.length} match${displayFiles.length !== 1 ? "es" : ""} across all containers`}
+                        </div>
+
+                        {/* Select All / Clear / Done */}
+                        <div className="mb-2 flex items-center gap-2">
+                          <button
+                            onClick={() => setSelectedUrls(new Set(displayFiles.map((f) => f.url)))}
+                            className="px-2 py-1 rounded border bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                          >
+                            Select All
+                          </button>
+                          <button
+                            onClick={clearSelection}
+                            className="px-2 py-1 rounded border bg-white text-gray-700 border-gray-300 hover:bg-gray-100"
+                          >
+                            Clear
+                          </button>
+                          <button
+                            onClick={() => {
+                              const selected = displayFiles.filter((f) => selectedUrls.has(f.url));
+                              onSelectFiles?.(selected);
+                              onClose?.();
+                            }}
+                            disabled={selectedUrls.size === 0}
+                            className={`px-2 py-1 rounded border ${
+                              selectedUrls.size === 0 ? "bg-gray-200 text-gray-400" : "bg-blue-600 text-white"
+                            }`}
+                          >
+                            Done ({selectedUrls.size})
+                          </button>
+                        </div>
+
+                        {/* Results grid / list */}
+                        <div
+                          className={
+                            view === "grid"
+                              ? "grid grid-cols-3 gap-3 max-h-[420px] overflow-auto"
+                              : "divide-y rounded-lg border border-gray-200 max-h-[280px] overflow-auto"
+                          }
+                        >
+                          {displayFiles.map((file) => {
+                            const isSelected = selectedUrls.has(file.url);
+                            const shortName  = file.name?.split("/").pop() ?? file.name;
+                            const filePath   = getFilePath(file.name);    // FIX 3: breadcrumb path
+                            const fileContainer = file.container ?? container; // cross-container results carry .container
+
+                            return (
+                              <button
+                                key={file.url}
+                                onClick={() => toggleSelected(file)}
+                                className={
+                                  view === "grid"
+                                    ? `relative group p-2 rounded-lg border text-left transition ${
+                                        isSelected ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
+                                      }`
+                                    : `w-full flex items-center gap-3 px-3 py-3 text-left ${
+                                        isSelected ? "bg-blue-50" : "hover:bg-gray-50"
+                                      }`
+                                }
+                              >
+                                <div
+                                  className={`w-5 h-5 rounded border flex items-center justify-center ${
+                                    isSelected ? "bg-blue-600 border-blue-600" : "bg-white border-gray-300"
+                                  }`}
+                                >
+                                  {isSelected && (
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+                                      <path d="M20 6 9 17l-5-5" />
+                                    </svg>
+                                  )}
+                                </div>
+
+                                <div
+                                  className={
+                                    view === "grid"
+                                      ? "w-full aspect-[4/3] bg-gray-100 rounded overflow-hidden mb-1"
+                                      : "w-16 h-12 rounded overflow-hidden bg-gray-100 flex-shrink-0"
+                                  }
+                                >
+                                  {/* FIX: eager loading prevents Edge lazy-load intervention */}
+                                  <img src={file.url} alt="" className="w-full h-full object-cover" loading="eager" />
+                                </div>
+
+                                <div className="flex flex-col min-w-0 flex-1">
+                                  {/* Filename */}
+                                  <div className="text-sm font-medium text-gray-800 truncate">{shortName}</div>
+                                  {/* FIX 3: Breadcrumb path */}
+                                  {filePath && (
+                                    <div className="text-xs text-blue-600 truncate" title={filePath}>
+                                      {filePath}
+                                    </div>
+                                  )}
+                                  {/* Container badge */}
+                                  {fileContainer && (
+                                    <div className="text-xs text-gray-400 truncate">{fileContainer}</div>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </>
+
+              ) : (
+                // ── NORMAL BROWSE MODE (no query) — completely unchanged ──────
+                <>
+                  {loading ? (
+                    <div className="text-gray-500">Loading…</div>
+                  ) : (
+                    <>
+                      <div className="mb-4">
+                        <div className="text-sm font-semibold text-gray-700 mb-2">Folders</div>
+                        <div
+                          className={
+                            view === "grid"
+                              ? "grid grid-cols-3 gap-3 max-h-[420px] overflow-auto"
+                              : "divide-y rounded-lg border border-gray-200 max-h-[280px] overflow-auto"
+                          }
+                        >
+                          {filteredFolders.map((full) => {
+                            const name = full.split("/").filter(Boolean).pop();
+                            return (
+                              <button
+                                key={full}
+                                onClick={() => onOpenFolder(full + "/")}
+                                className={
+                                  view === "grid"
+                                    ? "group flex flex-col items-start gap-2 p-3 rounded-lg border border-gray-200 bg-white hover:shadow text-left"
+                                    : "w-full flex items-center gap-3 px-3 py-3 hover:bg-gray-50 text-left"
+                                }
+                              >
+                                <GoldFolderIcon className="w-6 h-6 text-[#D4AF37]" />
+                                <div className="text-sm font-medium text-gray-800 truncate w-full">{name}</div>
+                              </button>
+                            );
+                          })}
+                          {filteredFolders.length === 0 && <div className="p-3 text-gray-500">No folders</div>}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm font-semibold text-gray-700 mb-2">Images</div>
+                        {hasImages && (
+                          <div className="mb-2 flex items-center gap-2">
+                            <button onClick={selectAllVisible} className="px-2 py-1 rounded border bg-white text-gray-700 border-gray-300 hover:bg-gray-100">Select All</button>
+                            <button onClick={clearSelection} className="px-2 py-1 rounded border bg-white text-gray-700 border-gray-300 hover:bg-gray-100">Clear</button>
+                            <button
+                              onClick={doneSelection}
+                              disabled={selectedUrls.size === 0}
+                              className={`px-2 py-1 rounded border ${selectedUrls.size === 0 ? "bg-gray-200 text-gray-400" : "bg-blue-600 text-white"}`}
+                            >
+                              Done ({selectedUrls.size})
+                            </button>
+                          </div>
+                        )}
+                        <div
+                          className={
+                            view === "grid"
+                              ? "grid grid-cols-3 gap-3 max-h-[420px] overflow-auto"
+                              : "divide-y rounded-lg border border-gray-200 max-h-[280px] overflow-auto"
+                          }
+                        >
+                          {filteredFiles.map((file) => {
+                            const isSelected = selectedUrls.has(file.url);
+                            return (
+                              <button
+                                key={file.url}
+                                onClick={() => toggleSelected(file)}
+                                className={
+                                  view === "grid"
+                                    ? `relative group p-2 rounded-lg border text-left transition ${isSelected ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"}`
+                                    : `w-full flex items-center gap-3 px-3 py-3 text-left ${isSelected ? "bg-blue-50" : "hover:bg-gray-50"}`
+                                }
+                              >
+                                <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? "bg-blue-600 border-blue-600" : "bg-white border-gray-300"}`}>
+                                  {isSelected && (
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+                                      <path d="M20 6 9 17l-5-5" />
+                                    </svg>
+                                  )}
+                                </div>
+                                <div className={view === "grid" ? "w-full aspect-[4/3] bg-gray-100 rounded overflow-hidden mb-2" : "w-16 h-12 rounded overflow-hidden bg-gray-100"}>
+                                  <img src={file.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                                </div>
+                                <div className="text-sm font-medium text-gray-800 truncate flex-1">{file.name}</div>
+                              </button>
+                            );
+                          })}
+                          {filteredFiles.length === 0 && <div className="p-3 text-gray-500">No images</div>}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </div>
+           
+
+		   {/*******/}			
           </div>
         </div>
     </div>
@@ -580,14 +893,19 @@ function normalizePos(gps) {
   return null;
 }
 
+
+
 /* ------------------------------------------------------------- */
 /* Main Component */
 /* ------------------------------------------------------------- */
 export default function MapCompare() {
   const navigate = useNavigate();
-  const storageAccountName = import.meta.env.VITE_STORAGE_ACCOUNT_NAME || "dcpmcloudstorage";
-  const sasToken = import.meta.env.VITE_ACCOUNT_SAS_TOKEN;
-  const baseUrl = `https://${storageAccountName}.blob.core.windows.net`;
+  //const storageAccountName = import.meta.env.VITE_STORAGE_ACCOUNT_NAME || "dcpmcloudstorage";
+  //const sasToken = import.meta.env.VITE_ACCOUNT_SAS_TOKEN;
+  //const baseUrl = `https://${storageAccountName}.blob.core.windows.net`;
+
+const sasToken = SAS;       // always has the hardcoded fallback from constants.js
+const baseUrl  = BASE_URL;  // matches azureConfig.js behaviour exactly
 
   const [showRightPanel, setShowRightPanel] = useState(false);
 
@@ -603,6 +921,9 @@ export default function MapCompare() {
   const [leftUploadMarkers, setLeftUploadMarkers] = useState([]);
   const [rightUploadMarkers, setRightUploadMarkers] = useState([]);
 
+  //const [leftSearchOpen,  setLeftSearchOpen]  = useState(false); // feb 24 newly added
+  //const [rightSearchOpen, setRightSearchOpen] = useState(false); // feb 24 newly added
+  
   const initBlob = {
     container: CONTAINER_OPTIONS[0],
     pathSegments: [],
@@ -1411,7 +1732,7 @@ useEffect(() => {
                   <GoldFolderIcon /> <span>Explorer</span>
                 </button>
               </div>
-
+				  
               {!leftExplorerOpen && (
                 <>
                   <Breadcrumbs pathSegments={leftBlob.pathSegments} onCrumbClick={(idx) => onCrumbClick("left", idx)} />

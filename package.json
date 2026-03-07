@@ -21,6 +21,7 @@
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "lucide-react": "^0.548.0",
+    "npm": "^11.6.0",
     "passport-azure-ad": "^4.3.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
