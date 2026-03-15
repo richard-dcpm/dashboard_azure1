@@ -19,7 +19,6 @@ export default function Uploader() {
       globalProgress={uploader.globalProgress}
       retryItem={uploader.retryItem}
       cancelItem={uploader.cancelItem}
-	  searchFoldersApi={uploader.searchFolders}
     />
   );
 }

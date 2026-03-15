@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useCallback, useEffect } from "react";
+import React, { useMemo, useState, useRef, useCallback } from "react";
 import { Home as HomeIcon, Eye, EyeOff, Folder, ChevronDown, ChevronUp, RotateCcw, X } from "lucide-react";
 
 const HIDDEN_PREFIX = ".hidden_";   // soft — visible via toggle
@@ -50,11 +50,11 @@ export default function UploaderLayout({
   renameFolderApi,
   hideFolderApi,
   trashFolderApi,
-  searchFoldersApi,
   queue          = [],
   globalProgress = {},
   retryItem,
   cancelItem,
+  
 }) {
   const [activeContainer,   setActiveContainer]   = useState(null);
   const [showHidden,        setShowHidden]         = useState(false);
@@ -66,8 +66,6 @@ export default function UploaderLayout({
   const [page,              setPage]               = useState(1);
   const [isDragging,        setIsDragging]         = useState(false);
   const [progressExpanded,  setProgressExpanded]   = useState(false);
-  const [searchResults,     setSearchResults]      = useState([]);
-  const [isSearching,       setIsSearching]        = useState(false);
 
   const fileInputRef   = useRef(null); // files only
   const folderInputRef = useRef(null); // folders only (webkitdirectory)
@@ -97,31 +95,13 @@ export default function UploaderLayout({
 	}, [folders, showHidden, searchQuery]);
 
   const totalPages       = Math.max(1, Math.ceil(filteredFolders.length / PAGE_SIZE));
- 
   const paginatedFolders = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return filteredFolders.slice(start, start + PAGE_SIZE);
   }, [filteredFolders, page]);
 
-  useEffect(() => {
-	  if (!searchQuery.trim()) { setSearchResults([]); return; }
-	  if (!activeContainer || typeof searchFoldersApi !== "function") return;
-	  const timer = setTimeout(async () => {
-		setIsSearching(true);
-		try {
-		  const results = await searchFoldersApi(activeContainer, searchQuery, showHidden);
-		  setSearchResults(results);
-		} catch {
-		  pushToast("error", "Search failed.");
-		} finally {
-		  setIsSearching(false);
-		}
-	  }, 400);
-	  return () => clearTimeout(timer);
-	}, [searchQuery, activeContainer, showHidden]);
-	
   const basePath = currentPath.length ? currentPath.join("/") + "/" : "";
-  
+
   const { uploadedSize = 0, totalSize = 0, uploadedCount = 0, totalCount = 0 } = globalProgress;
   const overallPct = totalSize > 0 ? Math.round((uploadedSize / totalSize) * 100) : 0;
   const allDone    = queue.length > 0 && queue.every((i) => i.status === "complete" || i.status === "failed" || i.status === "cancelled");
@@ -387,7 +367,7 @@ export default function UploaderLayout({
                     + New Folder
                   </button>
                 </div>
-				{/**
+
                 {loadingBlobs ? (
                   <div className="text-center py-10 text-fg/50">Processing Azure request...</div>
                 ) : (
@@ -404,8 +384,8 @@ export default function UploaderLayout({
                             </div>
                             <div className="flex gap-4 border-t border-white/10 pt-3">
                               <button onClick={() => renameFolder(name)} className="text-blue-800 text-xs font-bold hover:underline">RENAME</button>
-					  {/*<button onClick={() => hideFolder(name)} className="text-red-800 text-xs font-bold hover:underline">{isHidden ? "UNHIDE" : "HIDE"}</button>*/}
-						  {/**             <button onClick={() => trashFolder(name)} className="text-red-500 text-xs font-bold hover:underline"> DELETE </button>
+						   {/*<button onClick={() => hideFolder(name)} className="text-red-800 text-xs font-bold hover:underline">{isHidden ? "UNHIDE" : "HIDE"}</button>*/}
+                              <button onClick={() => trashFolder(name)} className="text-red-500 text-xs font-bold hover:underline"> DELETE </button>
 							</div>
                           </div>
                         );
@@ -424,78 +404,6 @@ export default function UploaderLayout({
                     )}
                   </>
                 )}
-	  **/}
-	            {loadingBlobs ? (
-					  <div className="text-center py-10 text-fg/50">Processing Azure request...</div>
-					) : searchQuery.trim() ? (
-					  // ── Search results mode ──
-					  isSearching ? (
-						<div className="text-center py-10 text-fg/50">Searching...</div>
-					  ) : searchResults.length === 0 ? (
-						<div className="text-center py-10 text-fg/40">No matches found</div>
-					  ) : (
-						<ul className="divide-y divide-white/10">
-						  {searchResults.map((fullPath) => {
-							const parts    = fullPath.split("/");
-							const name     = parts[parts.length - 1];
-							const isHidden = name.startsWith(HIDDEN_PREFIX);
-							return (
-							  <li
-								key={fullPath}
-								onClick={() => {
-								  setCurrentPath(parts);
-								  setSearchQuery("");
-								  setPage(1);
-								  loadFolders(activeContainer, parts);
-								}}
-								className={`flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 cursor-pointer transition ${isHidden ? "opacity-40" : ""}`}
-							  >
-								<Folder size={16} className={`shrink-0 ${isHidden ? "text-gray-400" : "text-yellow-500"}`} />
-								<div className="min-w-0">
-								  <span className="text-sm font-semibold text-fg/90">{name}</span>
-								  <p className="text-xs text-fg/40 font-mono truncate" title={fullPath}>
-									{activeContainer}/{fullPath}
-								  </p>
-								</div>
-							  </li>
-							);
-						  })}
-						</ul>
-					  )
-					) : (
-					  // ── Normal browsing mode ──
-					  <>
-						<div className="grid grid-cols-3 gap-3">
-						  {paginatedFolders.map((name, idx) => {
-							const isHidden = name.startsWith(HIDDEN_PREFIX);
-							return (
-							  <div key={`${name}-${idx}`}
-								className={`p-4 rounded-lg bg-white/5 border border-glass-border hover:bg-white/10 transition ${isHidden ? "opacity-40 border-dashed" : ""}`}>
-								<div onClick={() => handleFolderClick(name)} className="flex items-center cursor-pointer mb-3">
-								  <Folder size={20} className={`mr-2 ${isHidden ? "text-gray-400" : "text-yellow-500"}`} />
-								  <span className="font-semibold truncate text-fg/90">{name}</span>
-								</div>
-								<div className="flex gap-4 border-t border-white/10 pt-3">
-								  <button onClick={() => renameFolder(name)} className="text-blue-800 text-xs font-bold hover:underline">RENAME</button>
-								  <button onClick={() => trashFolder(name)} className="text-red-500 text-xs font-bold hover:underline">DELETE</button>
-								</div>
-							  </div>
-							);
-						  })}
-						  {filteredFolders.length === 0 && (
-							<div className="col-span-3 text-center py-10 text-fg/40">No folders found</div>
-						  )}
-						</div>
-
-						{totalPages > 1 && (
-						  <div className="flex items-center justify-center gap-3 mt-4">
-							<button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="px-3 py-1 rounded bg-white/10 disabled:opacity-40">Prev</button>
-							<span className="text-sm text-fg/70">Page {page} / {totalPages}</span>
-							<button disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="px-3 py-1 rounded bg-white/10 disabled:opacity-40">Next</button>
-						  </div>
-						)}
-					  </>
-					)} 
               </div>
             </div>
 

@@ -220,29 +220,6 @@ export function useUploader() {
 	  await moveAzureFolder(container, `${pathStr}${name}`, `${pathStr}${target}`);
     }, []);
 
-  const searchFolders = useCallback(async (container, query, showHidden = false) => {
-	  if (!query.trim()) return [];
-	  const containerClient = getContainerClient(container);
-	  const q = query.toLowerCase();
-	  const matched = new Set();
-
-	  for await (const blob of containerClient.listBlobsFlat()) {
-		const parts = blob.name.split("/");
-		for (let i = 0; i < parts.length - 1; i++) {
-		  const segment = parts[i];
-		  if (
-			segment.toLowerCase().includes(q) &&
-			!segment.startsWith(TRASH_PREFIX) &&
-			(showHidden || !segment.startsWith(HIDDEN_PREFIX))
-		  ) {
-			matched.add(parts.slice(0, i + 1).join("/"));
-		  }
-		}
-	  }
-
-	  return Array.from(matched).sort();
-	}, []);
-
   return {
     containers,
     selectedContainer,
@@ -268,6 +245,5 @@ export function useUploader() {
     retryItem,
     cancelItem,
     pushHistory,
-	searchFolders,
   };
 }
