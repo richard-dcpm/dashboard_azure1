@@ -3,13 +3,15 @@ import { lazy, Suspense } from "react";
 
 import AuthProvider        from "./components/AuthProvider";
 import UploadQueueProvider from "./components/UploadQueueProvider";
-import UploadProgressModal from "./components/UploadProgressModal"; // ← still imported here
+import UploadProgressModal from "./components/UploadProgressModal";
 import ErrorBoundary       from "./components/ErrorBoundary";
+import { DownloadProvider } from "./components/DownloadContext";
+import DownloadToast        from "./components/DownloadToast";
 import 'leaflet/dist/leaflet.css';
 
 const Dashboard    = lazy(() => import("./pages/Dashboard"));
 const Uploader     = lazy(() => import("./components/Uploader/Uploader"));
-const ImageGallery = lazy(() => import("./components/ImageGallery"));
+const ImageGallery = lazy(() => import("./components/ImageGallery/ImageGallery"));
 const MapCompare   = lazy(() => import("./pages/MapCompare"));
 const Reck         = lazy(() => import("./pages/Reck"));
 const ADDi         = lazy(() => import("./pages/ADDi"));
@@ -27,12 +29,8 @@ const NotFound = () => (
 function AppContent() {
   return (
     <Suspense fallback={<LoadingSpinner />}>
-      {/*
-        Modal is INSIDE the router so useLocation() works.
-        It renders nothing when on /uploader (layout handles progress inline there).
-        On all other pages it shows the slim floating bar.
-      */}
       <UploadProgressModal />
+      <DownloadToast />        {/* ← sibling, not a wrapper; survives all route changes */}
 
       <Routes>
         <Route path="/dashboard"   element={<Dashboard />} />
@@ -55,11 +53,13 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <UploadQueueProvider>
-          <HashRouter>
-            <AppContent />
-          </HashRouter>
-        </UploadQueueProvider>
+        <DownloadProvider>        {/* ← wraps everything so context is available app-wide */}
+          <UploadQueueProvider>
+            <HashRouter>
+              <AppContent />
+            </HashRouter>
+          </UploadQueueProvider>
+        </DownloadProvider>
       </AuthProvider>
     </ErrorBoundary>
   );
